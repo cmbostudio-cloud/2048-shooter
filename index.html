@@ -397,7 +397,8 @@
   import {
     getAuth,
     GoogleAuthProvider,
-    signInWithPopup,
+    signInWithRedirect,
+    getRedirectResult,
     signOut,
     onAuthStateChanged
   } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
@@ -432,6 +433,11 @@
   // ── 현재 유저 ────────────────────────────────────────────────
   let currentUser = null;
   let unsubscribeRanking = null;
+
+  // ── 리디렉션 복귀 처리 ──────────────────────────────────────
+  getRedirectResult(auth).catch((e) => {
+    console.error("redirect error:", e);
+  });
 
   // ── 인증 상태 감시 ───────────────────────────────────────────
   onAuthStateChanged(auth, async (user) => {
@@ -569,11 +575,9 @@
     const provider = new GoogleAuthProvider();
     provider.setCustomParameters({ prompt: "select_account" });
     try {
-      await signInWithPopup(auth, provider);
+      await signInWithRedirect(auth, provider);
     } catch (e) {
-      if (e.code !== "auth/popup-closed-by-user") {
-        showToast("로그인 실패: " + e.message, "error");
-      }
+      showToast("로그인 실패: " + e.message, "error");
     }
   };
 
