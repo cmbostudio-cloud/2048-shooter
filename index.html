@@ -141,6 +141,70 @@
     /* ── App screen ── */
     #app-screen { display: none; }
 
+    /* ── Nickname screen ── */
+    #nickname-screen {
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 60vh;
+      gap: 1.2rem;
+      text-align: center;
+    }
+
+    #nickname-screen h1 {
+      font-family: 'Space Grotesk', sans-serif;
+      font-size: 1.8rem;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+    }
+
+    #nickname-screen h1 span { color: var(--accent); }
+
+    #nickname-screen p { color: var(--muted); font-size: 0.88rem; }
+
+    #nickname-input {
+      width: 100%;
+      max-width: 340px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 14px 18px;
+      color: var(--text);
+      font-family: 'Space Grotesk', sans-serif;
+      font-size: 1.2rem;
+      font-weight: 700;
+      outline: none;
+      text-align: center;
+      transition: border-color 0.2s;
+    }
+    #nickname-input:focus { border-color: var(--accent); }
+    #nickname-input::placeholder { color: var(--muted); font-weight: 400; font-size: 0.95rem; }
+
+    /* ── 닉네임 변경 버튼 (인라인) ── */
+    .nickname-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 0.25rem;
+    }
+    .nickname-row span {
+      font-size: 0.8rem;
+      color: var(--muted);
+    }
+    .btn-nick-edit {
+      font-size: 0.72rem;
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--muted);
+      padding: 3px 10px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-family: 'Noto Sans KR', sans-serif;
+      transition: color 0.15s;
+    }
+    .btn-nick-edit:hover { color: var(--text); }
+
     /* ── Score card ── */
     .score-card {
       background: var(--surface);
@@ -259,13 +323,7 @@
       overflow: hidden;
       text-overflow: ellipsis;
     }
-    .rank-email {
-      font-size: 0.73rem;
-      color: var(--muted);
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
+    .rank-email { display: none; }
 
     .rank-score {
       font-family: 'Space Grotesk', sans-serif;
@@ -366,11 +424,23 @@
     </button>
   </section>
 
+  <!-- 닉네임 설정 화면 -->
+  <section id="nickname-screen">
+    <h1>닉네임을<br/><span>설정해주세요</span></h1>
+    <p>랭킹에 표시될 이름이에요.<br/>이메일은 공개되지 않아요.</p>
+    <input id="nickname-input" type="text" maxlength="16" placeholder="닉네임 입력 (최대 16자)" />
+    <button class="btn btn-primary" style="padding:12px 32px; font-size:0.95rem;" onclick="saveNickname()">시작하기</button>
+  </section>
+
   <!-- 로그인 후 화면 -->
   <section id="app-screen">
     <div class="score-card">
       <h2>내 점수 입력</h2>
-      <div class="score-input-row">
+      <div class="nickname-row">
+        <span id="my-nickname-display">닉네임 없음</span>
+        <button class="btn-nick-edit" onclick="openNicknameEdit()">✏️ 변경</button>
+      </div>
+      <div class="score-input-row" style="margin-top:0.75rem">
         <input id="score-input" type="number" placeholder="숫자를 입력하세요" min="0" max="999999999" />
         <button class="btn btn-primary" onclick="submitScore()">제출</button>
       </div>
@@ -437,10 +507,20 @@
   onAuthStateChanged(auth, async (user) => {
     currentUser = user;
     if (user) {
-      showApp(user);
-      await ensureUserDoc(user);
-      subscribeRanking();
-      loadMyScore(user.uid);
+      const snap = await getDoc(doc(db, "scores", user.uid));
+      const data = snap.exists() ? snap.data() : null;
+      const nickname = data?.nickname || "";
+
+      if (!nickname) {
+        // 닉네임 미설정 → 닉네임 설정 화면
+        showNicknameScreen();
+      } else {
+        // 닉네임 있음 → 앱 화면
+        showApp(user, nickname);
+        if (!snap.exists()) await ensureUserDoc(user, nickname);
+        subscribeRanking();
+        loadMyScore(user.uid);
+      }
     } else {
       showLogin();
       if (unsubscribeRanking) { unsubscribeRanking(); unsubscribeRanking = null; }
@@ -448,28 +528,44 @@
   });
 
   // ── Firestore: 유저 문서 생성/업데이트 ──────────────────────
-  async function ensureUserDoc(user) {
-    const ref = doc(db, "scores", user.uid);
-    const snap = await getDoc(ref);
-    if (!snap.exists()) {
-      await setDoc(ref, {
-        uid:       user.uid,
-        name:      user.displayName || "익명",
-        email:     user.email       || "",
-        photoURL:  user.photoURL    || "",
-        score:     null,
-        updatedAt: serverTimestamp()
-      });
-    } else {
-      // 프로필 정보 최신 동기화 (점수는 건드리지 않음)
-      await setDoc(ref, {
-        name:      user.displayName || "익명",
-        email:     user.email       || "",
-        photoURL:  user.photoURL    || "",
+  async function ensureUserDoc(user, nickname) {
+    await setDoc(doc(db, "scores", user.uid), {
+      uid:       user.uid,
+      nickname:  nickname,
+      score:     null,
+      updatedAt: serverTimestamp()
+    });
+  }
+
+  // ── 닉네임 저장 ──────────────────────────────────────────────
+  window.saveNickname = async () => {
+    if (!currentUser) return;
+    const nick = document.getElementById("nickname-input").value.trim();
+    if (!nick) { showToast("닉네임을 입력해주세요.", "error"); return; }
+    if (nick.length > 16) { showToast("16자 이하로 입력해주세요.", "error"); return; }
+
+    try {
+      await setDoc(doc(db, "scores", currentUser.uid), {
+        uid:       currentUser.uid,
+        nickname:  nick,
         updatedAt: serverTimestamp()
       }, { merge: true });
+
+      showApp(currentUser, nick);
+      subscribeRanking();
+      loadMyScore(currentUser.uid);
+      showToast("닉네임이 설정됐어요! 🎉", "success");
+    } catch(e) {
+      showToast("저장 실패: " + e.message, "error");
     }
-  }
+  };
+
+  // ── 닉네임 변경 (인라인) ─────────────────────────────────────
+  window.openNicknameEdit = () => {
+    const current = document.getElementById("my-nickname-display").textContent;
+    document.getElementById("nickname-input").value = current;
+    showNicknameScreen();
+  };
 
   // ── Firestore: 내 점수 로드 ──────────────────────────────────
   async function loadMyScore(uid) {
@@ -480,6 +576,9 @@
       el.innerHTML = d.score !== null
         ? `현재 점수: <strong>${d.score.toLocaleString()}</strong>`
         : `현재 점수: <strong>없음</strong>`;
+      if (d.nickname) {
+        document.getElementById("my-nickname-display").textContent = d.nickname;
+      }
     }
   }
 
@@ -546,13 +645,8 @@
         item.className = "rank-item" + (isMe ? " is-me" : "");
         item.innerHTML = `
           <div class="rank-num ${rankClass}">${rankLabel}</div>
-          <img class="rank-avatar"
-               src="${d.photoURL || defaultAvatar(d.name)}"
-               alt="${escHtml(d.name)}"
-               onerror="this.src='${defaultAvatar(d.name)}'" />
           <div class="rank-info">
-            <div class="rank-name">${escHtml(d.name)}${isMe ? ' <span class="me-badge">나</span>' : ''}</div>
-            <div class="rank-email">${escHtml(d.email)}</div>
+            <div class="rank-name">${escHtml(d.nickname || "익명")}${isMe ? ' <span class="me-badge">나</span>' : ''}</div>
           </div>
           <div class="rank-score">${d.score.toLocaleString()}</div>
         `;
@@ -588,32 +682,40 @@
   };
 
   // ── UI 헬퍼 ──────────────────────────────────────────────────
-  function showApp(user) {
-    document.getElementById("login-screen").style.display = "none";
-    document.getElementById("app-screen").style.display  = "block";
-    document.getElementById("login-btn").style.display   = "none";
-    document.getElementById("logout-btn").style.display  = "block";
-    document.getElementById("user-name").style.display   = "block";
-    document.getElementById("user-name").textContent     = user.displayName || user.email;
+  function showApp(user, nickname) {
+    document.getElementById("login-screen").style.display     = "none";
+    document.getElementById("nickname-screen").style.display  = "none";
+    document.getElementById("app-screen").style.display       = "block";
+    document.getElementById("login-btn").style.display        = "none";
+    document.getElementById("logout-btn").style.display       = "block";
+    document.getElementById("user-name").style.display        = "block";
+    document.getElementById("user-name").textContent          = nickname || user.displayName || "";
+    document.getElementById("my-nickname-display").textContent = nickname || "";
     const av = document.getElementById("user-avatar");
     if (user.photoURL) { av.src = user.photoURL; av.style.display = "block"; }
   }
 
-  function showLogin() {
-    document.getElementById("login-screen").style.display = "flex";
-    document.getElementById("app-screen").style.display   = "none";
-    document.getElementById("login-btn").style.display    = "flex";
-    document.getElementById("logout-btn").style.display   = "none";
-    document.getElementById("user-name").style.display    = "none";
-    document.getElementById("user-avatar").style.display  = "none";
-    document.getElementById("ranking-list").innerHTML     = "";
-    document.getElementById("loading").style.display      = "block";
-    document.getElementById("loading").textContent        = "랭킹 불러오는 중...";
+  function showNicknameScreen() {
+    document.getElementById("login-screen").style.display    = "none";
+    document.getElementById("app-screen").style.display      = "none";
+    document.getElementById("nickname-screen").style.display = "flex";
+    document.getElementById("login-btn").style.display       = "none";
+    document.getElementById("logout-btn").style.display      = "block";
+    document.getElementById("user-name").style.display       = "none";
+    document.getElementById("user-avatar").style.display     = "none";
   }
 
-  function defaultAvatar(name) {
-    const c = encodeURIComponent((name || "?")[0].toUpperCase());
-    return `https://ui-avatars.com/api/?name=${c}&background=7c3aed&color=fff&size=80`;
+  function showLogin() {
+    document.getElementById("login-screen").style.display    = "flex";
+    document.getElementById("nickname-screen").style.display = "none";
+    document.getElementById("app-screen").style.display      = "none";
+    document.getElementById("login-btn").style.display       = "flex";
+    document.getElementById("logout-btn").style.display      = "none";
+    document.getElementById("user-name").style.display       = "none";
+    document.getElementById("user-avatar").style.display     = "none";
+    document.getElementById("ranking-list").innerHTML        = "";
+    document.getElementById("loading").style.display         = "block";
+    document.getElementById("loading").textContent           = "랭킹 불러오는 중...";
   }
 
   function escHtml(str) {
@@ -630,9 +732,11 @@
     toastTimer = setTimeout(() => { t.classList.remove("show"); }, 2800);
   }
 
-  // Enter 키로 점수 제출
   document.getElementById("score-input").addEventListener("keydown", (e) => {
     if (e.key === "Enter") window.submitScore();
+  });
+  document.getElementById("nickname-input").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") window.saveNickname();
   });
 </script>
 </body>
