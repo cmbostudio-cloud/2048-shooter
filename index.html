@@ -1110,9 +1110,12 @@ function initPixiShooter() {
 
     window.addEventListener('resize', () => {
         if (pixiApp && pixiApp.renderer && gunSprite) {
-            const w = holder.clientWidth;
-            const h = holder.clientHeight;
-            pixiApp.renderer.resize(w, h);
+            const holder = document.getElementById('pixi-canvas-holder');
+            if (holder) {
+                const w = holder.clientWidth;
+                const h = holder.clientHeight;
+                pixiApp.renderer.resize(w, h);
+            }
         }
     });
 }
@@ -1319,7 +1322,8 @@ function updateEnemies(delta) {
 
         // 플레이어 기체와 적 기체 간 직접 충돌 판정 (쌍방 몸통 박치기)
         if (State.invincibleTimer <= 0) {
-            if (checkPlayerEnemyCollision(e, px, py)) { // 기체끼리 직접 부딪힌 참사
+            const collideDist = Math.hypot(e.x - px, e.y - py);
+            if (collideDist < 20) { // 기체끼리 직접 부딪힌 참사
                 triggerFighterHit();
                 
                 // 부딪힌 적은 즉시 격추 처리
@@ -1356,6 +1360,7 @@ function updateEnemies(delta) {
         }
 
         // 플레이어 탄환 피격 계산
+        let enemyDestroyed = false;
         for (let j = bullets.length - 1; j >= 0; j--) {
             const b = bullets[j];
             const dist = Math.hypot(e.x - b.x, e.y - b.y);
@@ -1376,9 +1381,14 @@ function updateEnemies(delta) {
                     pixiApp.stage.removeChild(e);
                     enemies.splice(i, 1);
                     updateWaveDisplay();
+                    enemyDestroyed = true;
                     break;
                 }
             }
+        }
+
+        if (enemyDestroyed) {
+            continue;
         }
 
         // 바닥 방어선 침략 (클래식 슈팅 게임이므로 무단 소멸처리되며 목숨은 안 깎임)
@@ -1547,6 +1557,8 @@ function triggerGameOver() {
 }
 
 function resetGame() {
+    if (!pixiApp || !pixiApp.stage) return;
+
     // 모든 스테이지 오브젝트 제거
     for (const e of enemies) {
         pixiApp.stage.removeChild(e);
