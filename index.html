@@ -407,10 +407,15 @@ const overchargeOverlay = document.getElementById('overcharge-overlay');
 
 // 로컬 스토리지 연동
 function loadHighScore() {
-    const saved = localStorage.getItem('2048shooter_highwave_hell');
-    if (saved) {
-        State.highWave = parseInt(saved);
-    } else {
+    try {
+        const saved = localStorage.getItem('2048shooter_highwave_hell');
+        if (saved) {
+            State.highWave = parseInt(saved);
+        } else {
+            State.highWave = 1;
+        }
+    } catch (e) {
+        console.warn("localStorage is restricted in this sandbox env, falling back silently:", e);
         State.highWave = 1;
     }
     mainHighWave.textContent = `BEST WAVE: ${State.highWave}`;
@@ -420,8 +425,41 @@ function loadHighScore() {
 function saveHighScore() {
     if (State.wave > State.highWave) {
         State.highWave = State.wave;
-        localStorage.setItem('2048shooter_highwave_hell', State.highWave);
+        try {
+            localStorage.setItem('2048shooter_highwave_hell', State.highWave);
+        } catch (e) {
+            console.warn("localStorage write restricted in this sandbox env, falling back silently:", e);
+        }
     }
+}
+
+// 삼각형 히트박스 내부 판정을 위한 벡터 수학 공식 (Cross Product Sign Method)
+function triangleSign(p1x, p1y, p2x, p2y, p3x, p3y) {
+    return (p1x - p3x) * (p2y - p3y) - (p2x - p3x) * (p1y - p3y);
+}
+
+function isPointInTriangle(px, py, x1, y1, x2, y2, x3, y3) {
+    const d1 = triangleSign(px, py, x1, y1, x2, y2);
+    const d2 = triangleSign(px, py, x2, y2, x3, y3);
+    const d3 = triangleSign(px, py, x3, y3, x1, y1);
+
+    const has_neg = (d1 < 0) || (d2 < 0) || (d3 < 0);
+    const has_pos = (d1 > 0) || (d2 > 0) || (d3 > 0);
+
+    return !(has_neg && has_pos);
+}
+
+function checkPlayerEnemyCollision(e, px, py) {
+    // 적 기체의 중심점(e.x, e.y)이 플레이어 삼각형에 충돌했는지 판정
+    if (isPointInTriangle(e.x, e.y, px, py - 15, px - 11, py + 11, px + 11, py + 11)) {
+        return true;
+    }
+    // 적 기체의 고유 크기(반경)를 고려하여 플레이어 기체의 세 꼭짓점 영역과의 세부 중첩 판정
+    const enemyRadius = e.patternType === 'bomber' ? 18 : 11;
+    if (Math.hypot(px - e.x, (py - 15) - e.y) < enemyRadius) return true;
+    if (Math.hypot((px - 11) - e.x, (py + 11) - e.y) < enemyRadius) return true;
+    if (Math.hypot((px + 11) - e.x, (py + 11) - e.y) < enemyRadius) return true;
+    return false;
 }
 
 // 하트(목숨) HUD 갱신
@@ -975,27 +1013,14 @@ function initPixiShooter() {
         targetGunX = width / 2;
         targetGunY = height - 35;
 
-        // 클래식 레트로 더블 프로펠러기 디자인 그리기
+        // 미니멀리즘 콘셉트에 맞춘 깔끔한 단색(오프화이트) 삼각형 전투기 그리기
         gunSprite = new PIXI.Graphics();
-        
-        // 동체 (Fuselage) - 연회색
-        gunSprite.beginFill(0xe4e4e7);
-        gunSprite.drawRect(-3, -15, 6, 26);
-        gunSprite.drawRect(-4, -18, 8, 4); // 전면 주둥이
-        
-        // 날개 (Main Wings) - 어두운 철색
-        gunSprite.beginFill(0x52525b);
-        gunSprite.drawRect(-20, -5, 40, 5);
-        gunSprite.drawRect(-18, -6, 36, 1);
-        
-        // 쌍발 프로펠러 엔진 포인트 (Red Accents)
-        gunSprite.beginFill(0xef4444);
-        gunSprite.drawRect(-14, -9, 4, 6);
-        gunSprite.drawRect(10, -9, 4, 6);
-        
-        // 꼬리 날개
-        gunSprite.beginFill(0x52525b);
-        gunSprite.drawRect(-8, 7, 16, 3);
+        gunSprite.beginFill(0xf4f4f5); 
+        gunSprite.drawPolygon([
+            0, -15,   // 조준점 방향의 앞쪽 코 정점
+            -11, 11,  // 좌측 후방 정점
+            11, 11    // 우측 후방 정점
+        ]);
         gunSprite.endFill();
         
         gunSprite.x = targetGunX;
@@ -1156,10 +1181,10 @@ function updateEnemyBullets(delta) {
             continue;
         }
         
-        // 플레이어 정밀 중심 피격 판정 (6px 초정밀 탄막 슈팅 히트박스 구현)
+        // 플레이어 정밀 중심 피격 판정 (삼각형 히트박스 내 각 포인트 투영 검사)
         if (State.invincibleTimer <= 0) {
-            const distToPlayer = Math.hypot(eb.x - px, eb.y - py);
-            if (distToPlayer < 8) { // 아케이드 난이도용 피격 반경 조율
+            const isHit = isPointInTriangle(eb.x, eb.y, px, py - 15, px - 11, py + 11, px + 11, py + 11);
+            if (isHit) {
                 triggerFighterHit();
                 pixiApp.stage.removeChild(eb);
                 enemyBullets.splice(i, 1);
@@ -1294,8 +1319,7 @@ function updateEnemies(delta) {
 
         // 플레이어 기체와 적 기체 간 직접 충돌 판정 (쌍방 몸통 박치기)
         if (State.invincibleTimer <= 0) {
-            const collideDist = Math.hypot(e.x - px, e.y - py);
-            if (collideDist < 20) { // 기체끼리 직접 부딪힌 참사
+            if (checkPlayerEnemyCollision(e, px, py)) { // 기체끼리 직접 부딪힌 참사
                 triggerFighterHit();
                 
                 // 부딪힌 적은 즉시 격추 처리
