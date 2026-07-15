@@ -37,7 +37,7 @@
             animation: pop 0.15s ease-out;
         }
         @keyframes pop {
-            0 { transform: scale(0.85); opacity: 0; }
+            0% { transform: scale(0.85); opacity: 0; }
             100% { transform: scale(1); opacity: 1; }
         }
         .cooldown-overlay {
@@ -250,7 +250,7 @@
                 <button id="btn-upgrade-prob" class="upgrade-btn flex flex-col items-center justify-between p-2.5 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 active:scale-95 transition-all rounded-xl disabled:opacity-40 disabled:pointer-events-none group">
                     <div class="flex items-center gap-1">
                         <span class="text-[9px] font-bold tracking-wider text-zinc-500 uppercase group-hover:text-zinc-400">Upgrade Prob</span>
-                        <span id="prob-lvl-tag" class="text-[8px] bg-zinc-800 text-zinc-300 px-1 py-0.2 rounded font-mono font-bold">Lv.1</span>
+                        <span id="prob-lvl-tag" class="text-[8px] bg-zinc-800 text-zinc-300 px-1 py-0.5 rounded font-mono font-bold">Lv.1</span>
                     </div>
                     <div class="my-1.5 p-1 bg-zinc-800/80 rounded-lg">
                         <i data-lucide="trending-up" class="w-4 h-4 text-emerald-400"></i>
@@ -262,7 +262,7 @@
                 <button id="btn-upgrade-grid" class="upgrade-btn flex flex-col items-center justify-between p-2.5 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 active:scale-95 transition-all rounded-xl disabled:opacity-40 disabled:pointer-events-none group">
                     <div class="flex items-center gap-1">
                         <span class="text-[9px] font-bold tracking-wider text-zinc-500 uppercase group-hover:text-zinc-400">Expand Grid</span>
-                        <span id="grid-lvl-tag" class="text-[8px] bg-zinc-800 text-zinc-300 px-1 py-0.2 rounded font-mono font-bold">4x4</span>
+                        <span id="grid-lvl-tag" class="text-[8px] bg-zinc-800 text-zinc-300 px-1 py-0.5 rounded font-mono font-bold">4x4</span>
                     </div>
                     <div class="my-1.5 p-1 bg-zinc-800/80 rounded-lg">
                         <i data-lucide="maximize" class="w-4 h-4 text-blue-400"></i>
@@ -774,7 +774,8 @@ function finishActiveWave() {
 }
 
 function triggerWaveAlert(msg) {
-    uiAlert.querySelector('span').textContent = msg;
+    const alertSpan = uiAlert.querySelector('span');
+    if (alertSpan) alertSpan.textContent = msg;
     uiAlert.className = "absolute top-2 left-1/2 transform -translate-x-1/2 text-zinc-950 text-[10px] font-bold px-3 py-1 rounded-full opacity-100 transition-opacity duration-300 shadow-md flex items-center gap-1 z-10 font-mono uppercase tracking-wider bg-zinc-100";
     
     setTimeout(() => {
@@ -1032,8 +1033,11 @@ function initPixiShooter() {
             const relativeX = clientX - rect.left;
             const relativeY = clientY - rect.top;
             
-            targetGunX = Math.max(15, Math.min(relativeX, width - 15));
-            targetGunY = Math.max(20, Math.min(relativeY, height - 15));
+            const currentWidth = (pixiApp && pixiApp.screen) ? pixiApp.screen.width : width;
+            const currentHeight = (pixiApp && pixiApp.screen) ? pixiApp.screen.height : height;
+            
+            targetGunX = Math.max(15, Math.min(relativeX, currentWidth - 15));
+            targetGunY = Math.max(20, Math.min(relativeY, currentHeight - 15));
         }
         
         interactionArea.addEventListener('mousemove', (e) => {
@@ -1054,7 +1058,11 @@ function initPixiShooter() {
                 const sec = delta / 60;
                 State.restTimeRemaining -= sec;
                 if (State.restTimeRemaining <= 0) {
-                    startActiveWave();
+                    try {
+                        startActiveWave();
+                    } catch (err) {
+                        console.error("Error starting wave safely:", err);
+                    }
                 } else {
                     updateWaveDisplay();
                 }
@@ -1107,6 +1115,10 @@ function initPixiShooter() {
                 const w = holder.clientWidth;
                 const h = holder.clientHeight;
                 pixiApp.renderer.resize(w, h);
+                targetGunX = Math.max(15, Math.min(targetGunX, w - 15));
+                targetGunY = Math.max(20, Math.min(targetGunY, h - 15));
+                gunSprite.x = Math.max(15, Math.min(gunSprite.x, w - 15));
+                gunSprite.y = Math.max(20, Math.min(gunSprite.y, h - 15));
             }
         }
     });
@@ -1538,7 +1550,8 @@ function triggerFighterHit() {
     State.invincibleTimer = 1.5;
     
     damageFlash.style.opacity = '1';
-    uiAlert.textContent = "FIGHTER COLLISION DETECTED! -1 LIFE";
+    const hitAlertSpan = uiAlert.querySelector('span');
+    if (hitAlertSpan) hitAlertSpan.textContent = "FIGHTER COLLISION DETECTED! -1 LIFE";
     uiAlert.className = "absolute top-2 left-1/2 transform -translate-x-1/2 bg-red-600 text-white text-[10px] font-bold px-3 py-1 rounded-full opacity-100 transition-opacity duration-300 shadow-md flex items-center gap-1 z-10 font-mono uppercase tracking-wider";
     
     setTimeout(() => { damageFlash.style.opacity = '0'; }, 150);
@@ -1639,7 +1652,15 @@ function setupTabs() {
 
         if (pixiApp && pixiApp.renderer) {
             const holder = document.getElementById('pixi-canvas-holder');
-            pixiApp.renderer.resize(holder.clientWidth, holder.clientHeight);
+            const w = holder.clientWidth;
+            const h = holder.clientHeight;
+            pixiApp.renderer.resize(w, h);
+            if (gunSprite) {
+                targetGunX = Math.max(15, Math.min(targetGunX, w - 15));
+                targetGunY = Math.max(20, Math.min(targetGunY, h - 15));
+                gunSprite.x = Math.max(15, Math.min(gunSprite.x, w - 15));
+                gunSprite.y = Math.max(20, Math.min(gunSprite.y, h - 15));
+            }
         }
     });
 
@@ -1698,7 +1719,11 @@ function setupModals() {
     
     btnSkipRest.addEventListener('click', () => {
         if (State.waveState === 'preparing') {
-            startActiveWave();
+            try {
+                startActiveWave();
+            } catch (err) {
+                console.error("Error starting wave safely:", err);
+            }
         }
     });
 
