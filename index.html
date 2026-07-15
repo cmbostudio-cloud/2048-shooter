@@ -405,7 +405,7 @@ const txtStrikeCd = document.getElementById('strike-cd-text');
 const freezeOverlay = document.getElementById('freeze-overlay');
 const overchargeOverlay = document.getElementById('overcharge-overlay');
 
-// 로컬 스토리지 연동
+// 로컬 스토리지 연동 (예외 처리 보안 가드 탑재)
 function loadHighScore() {
     try {
         const saved = localStorage.getItem('2048shooter_highwave_hell');
@@ -415,7 +415,7 @@ function loadHighScore() {
             State.highWave = 1;
         }
     } catch (e) {
-        console.warn("localStorage is restricted in this sandbox env, falling back silently:", e);
+        console.warn("localStorage is restricted, falling back safely:", e);
         State.highWave = 1;
     }
     mainHighWave.textContent = `BEST WAVE: ${State.highWave}`;
@@ -428,12 +428,12 @@ function saveHighScore() {
         try {
             localStorage.setItem('2048shooter_highwave_hell', State.highWave);
         } catch (e) {
-            console.warn("localStorage write restricted in this sandbox env, falling back silently:", e);
+            console.warn("localStorage write restricted, falling back safely:", e);
         }
     }
 }
 
-// 삼각형 히트박스 내부 판정을 위한 벡터 수학 공식 (Cross Product Sign Method)
+// 삼각형 내부 점 검출을 위한 외적 판정식 (삼각형 피격 히트박스 구현)
 function triangleSign(p1x, p1y, p2x, p2y, p3x, p3y) {
     return (p1x - p3x) * (p2y - p3y) - (p2x - p3x) * (p1y - p3y);
 }
@@ -447,19 +447,6 @@ function isPointInTriangle(px, py, x1, y1, x2, y2, x3, y3) {
     const has_pos = (d1 > 0) || (d2 > 0) || (d3 > 0);
 
     return !(has_neg && has_pos);
-}
-
-function checkPlayerEnemyCollision(e, px, py) {
-    // 적 기체의 중심점(e.x, e.y)이 플레이어 삼각형에 충돌했는지 판정
-    if (isPointInTriangle(e.x, e.y, px, py - 15, px - 11, py + 11, px + 11, py + 11)) {
-        return true;
-    }
-    // 적 기체의 고유 크기(반경)를 고려하여 플레이어 기체의 세 꼭짓점 영역과의 세부 중첩 판정
-    const enemyRadius = e.patternType === 'bomber' ? 18 : 11;
-    if (Math.hypot(px - e.x, (py - 15) - e.y) < enemyRadius) return true;
-    if (Math.hypot((px - 11) - e.x, (py + 11) - e.y) < enemyRadius) return true;
-    if (Math.hypot((px + 11) - e.x, (py + 11) - e.y) < enemyRadius) return true;
-    return false;
 }
 
 // 하트(목숨) HUD 갱신
@@ -750,8 +737,6 @@ function updateWaveDisplay() {
 
 function startActiveWave() {
     State.waveState = 'active';
-    
-    // 웨이브당 무자비하게 늘어나는 배치량
     State.enemiesTotalInWave = 10 + State.wave * 3;
     State.enemiesToSpawn = State.enemiesTotalInWave;
     
@@ -825,6 +810,7 @@ function activateStrike() {
     
     for (let i = enemies.length - 1; i >= 0; i--) {
         const e = enemies[i];
+        if (!e) continue;
         e.hp -= strikeDmg;
         e.txt.text = Math.max(0, e.hp).toString();
         e.graphic.tint = 0xef4444;
@@ -1097,10 +1083,14 @@ function initPixiShooter() {
 
             // 웨이브 종료 체크 (전멸 성공)
             if (State.waveState === 'active' && State.enemiesToSpawn === 0 && enemies.length === 0) {
-                finishActiveWave();
+                try {
+                    finishActiveWave();
+                } catch (err) {
+                    console.error("Error ending wave safely:", err);
+                }
             }
 
-            // 각종 실시간 묶음 처리 업데이트
+            // 각종 실시간 묶음 처리 업데이트 (예외 보호 격리 필터 장착)
             updateBullets(delta);
             updateEnemyBullets(delta);
             updateEnemies(delta);
@@ -1141,11 +1131,21 @@ function fireBullet() {
 }
 
 function updateBullets(delta) {
+    if (!pixiApp || !pixiApp.stage) return;
     for (let i = bullets.length - 1; i >= 0; i--) {
-        const b = bullets[i];
-        b.y -= 9 * delta;
-        if (b.y < -20) {
-            pixiApp.stage.removeChild(b);
+        try {
+            const b = bullets[i];
+            if (!b) {
+                bullets.splice(i, 1);
+                continue;
+            }
+            b.y -= 9 * delta;
+            if (b.y < -20) {
+                if (pixiApp.stage) pixiApp.stage.removeChild(b);
+                bullets.splice(i, 1);
+            }
+        } catch (err) {
+            console.error("Error handling friendly projectile:", err);
             bullets.splice(i, 1);
         }
     }
@@ -1169,29 +1169,41 @@ function fireEnemyBullet(startX, startY, vx, vy, speed = 2.5) {
 
 // 적 총알 물리 업데이트 및 플레이어 피격 연산
 function updateEnemyBullets(delta) {
+    if (!pixiApp || !pixiApp.stage || !gunSprite) return;
     const px = gunSprite.x;
     const py = gunSprite.y;
+    const screenHeight = pixiApp.screen ? pixiApp.screen.height : 230;
+    const screenWidth = pixiApp.screen ? pixiApp.screen.width : 300;
     
     for (let i = enemyBullets.length - 1; i >= 0; i--) {
-        const eb = enemyBullets[i];
-        eb.x += eb.vx * delta;
-        eb.y += eb.vy * delta;
-        
-        // 화면 이탈 시 소거
-        if (eb.y > pixiApp.screen.height + 15 || eb.x < -15 || eb.x > pixiApp.screen.width + 15) {
-            pixiApp.stage.removeChild(eb);
-            enemyBullets.splice(i, 1);
-            continue;
-        }
-        
-        // 플레이어 정밀 중심 피격 판정 (삼각형 히트박스 내 각 포인트 투영 검사)
-        if (State.invincibleTimer <= 0) {
-            const isHit = isPointInTriangle(eb.x, eb.y, px, py - 15, px - 11, py + 11, px + 11, py + 11);
-            if (isHit) {
-                triggerFighterHit();
-                pixiApp.stage.removeChild(eb);
+        try {
+            const eb = enemyBullets[i];
+            if (!eb) {
                 enemyBullets.splice(i, 1);
+                continue;
             }
+            eb.x += eb.vx * delta;
+            eb.y += eb.vy * delta;
+            
+            // 화면 이탈 시 소거
+            if (eb.y > screenHeight + 15 || eb.x < -15 || eb.x > screenWidth + 15) {
+                if (pixiApp.stage) pixiApp.stage.removeChild(eb);
+                enemyBullets.splice(i, 1);
+                continue;
+            }
+            
+            // 플레이어 정밀 중심 피격 판정 (삼각형 영역 히트박스 판정)
+            if (State.invincibleTimer <= 0) {
+                const isHit = isPointInTriangle(eb.x, eb.y, px, py - 15, px - 11, py + 11, px + 11, py + 11);
+                if (isHit) {
+                    triggerFighterHit();
+                    if (pixiApp.stage) pixiApp.stage.removeChild(eb);
+                    enemyBullets.splice(i, 1);
+                }
+            }
+        } catch (err) {
+            console.error("Error handling enemy bullet update:", err);
+            enemyBullets.splice(i, 1);
         }
     }
 }
@@ -1282,136 +1294,155 @@ function spawnWaveEnemy() {
     updateWaveDisplay();
 }
 
-// 적 상태 및 기종 패턴 물리 연동 루프
 function updateEnemies(delta) {
-    if (!pixiApp) return;
-    const height = pixiApp.screen.height;
+    if (!pixiApp || !pixiApp.stage || !gunSprite) return;
+    const height = pixiApp.screen ? pixiApp.screen.height : 230;
     const px = gunSprite.x;
     const py = gunSprite.y;
     let anyEnemyClose = false;
 
-    const isFrozen = State.abilities.freeze.duration > 0;
+    const isFrozen = State.abilities && State.abilities.freeze && State.abilities.freeze.duration > 0;
 
     for (let i = enemies.length - 1; i >= 0; i--) {
-        const e = enemies[i];
-        
-        // 디버프 상태 시 이동 및 탄막 발사 대폭 억제
-        const finalSpeed = isFrozen ? e.speed * 0.15 : e.speed;
-        e.patternTime += 0.05 * delta;
-
-        // 패턴 타입별 고유 궤적 이동 알고리즘
-        if (e.patternType === 'scout') {
-            // 갈지자 (Sinusoidal) 사선 왕복 운동
-            e.y += finalSpeed * delta;
-            e.x = e.initialX + Math.sin(e.patternTime) * 45;
-        } else if (e.patternType === 'kamikaze') {
-            // 무조건 플레이어가 비행하는 방향/중심축 좌표로 하강 추격
-            const dx = px - e.x;
-            const stepX = (dx > 0 ? 1 : -1) * 1.0 * finalSpeed;
-            e.x += stepX * delta;
-            e.y += finalSpeed * 1.2 * delta;
-        } else {
-            // Bomber 등은 천천히 수직 하강
-            e.y += finalSpeed * delta;
-        }
-
-        // 위험 탐지 영역 감지 경보 레이아웃 정렬
-        if (e.y > height * 0.55) {
-            anyEnemyClose = true;
-        }
-
-        // 플레이어 기체와 적 기체 간 직접 충돌 판정 (쌍방 몸통 박치기)
-        if (State.invincibleTimer <= 0) {
-            const collideDist = Math.hypot(e.x - px, e.y - py);
-            if (collideDist < 20) { // 기체끼리 직접 부딪힌 참사
-                triggerFighterHit();
-                
-                // 부딪힌 적은 즉시 격추 처리
-                createMinimalExplosion(e.x, e.y);
-                pixiApp.stage.removeChild(e);
+        try {
+            const e = enemies[i];
+            if (!e) {
                 enemies.splice(i, 1);
-                updateWaveDisplay();
                 continue;
             }
-        }
+            
+            // 디버프 상태 시 이동 및 탄막 발사 대폭 억제
+            const finalSpeed = isFrozen ? (e.speed || 1) * 0.15 : (e.speed || 1);
+            e.patternTime = (e.patternTime || 0) + 0.05 * delta;
 
-        // 탄막 공격 쿨다운 처리 및 발사 메커니즘
-        if (!isFrozen && !State.isGameOver) {
-            e.fireCooldown -= delta;
-            if (e.fireCooldown <= 0) {
-                // 타입별 독창적인 공격 양상 발동
-                if (e.patternType === 'bomber') {
-                    // 3방향 확산 살포탄
-                    fireEnemyBullet(e.x, e.y, 0, 1, 2.5);
-                    fireEnemyBullet(e.x, e.y, -0.4, 0.9, 2.3);
-                    fireEnemyBullet(e.x, e.y, 0.4, 0.9, 2.3);
-                    e.fireCooldown = 90 + Math.random() * 40;
-                } else if (e.patternType === 'scout') {
-                    // 플레이어 기체를 향해 저격을 날리는 조준 타격탄
-                    const dx = px - e.x;
-                    const dy = py - e.y;
-                    const len = Math.hypot(dx, dy);
-                    if (len > 10) {
-                        fireEnemyBullet(e.x, e.y, dx/len, dy/len, 3.0);
-                    }
-                    e.fireCooldown = 70 + Math.random() * 30;
-                }
+            // 패턴 타입별 고유 궤적 이동 알고리즘
+            if (e.patternType === 'scout') {
+                // 갈지자 (Sinusoidal) 사선 왕복 운동
+                e.y += finalSpeed * delta;
+                e.x = (e.initialX || 0) + Math.sin(e.patternTime) * 45;
+            } else if (e.patternType === 'kamikaze') {
+                // 무조건 플레이어가 비행하는 방향/중심축 좌표로 하강 추격
+                const dx = px - e.x;
+                const stepX = (dx > 0 ? 1 : -1) * 1.0 * finalSpeed;
+                e.x += stepX * delta;
+                e.y += finalSpeed * 1.2 * delta;
+            } else {
+                // Bomber 등은 천천히 수직 하강
+                e.y += finalSpeed * delta;
             }
-        }
 
-        // 플레이어 탄환 피격 계산
-        let enemyDestroyed = false;
-        for (let j = bullets.length - 1; j >= 0; j--) {
-            const b = bullets[j];
-            const dist = Math.hypot(e.x - b.x, e.y - b.y);
-            if (dist < 20) {
-                e.hp -= b.damage;
-                e.txt.text = Math.max(0, e.hp).toString();
-                
-                e.graphic.tint = isFrozen ? 0x3b82f6 : 0xef4444;
-                setTimeout(() => { if (e && e.graphic) e.graphic.tint = 0xffffff; }, 50);
+            // 위험 탐지 영역 감지 경보 레이아웃 정렬
+            if (e.y > height * 0.55) {
+                anyEnemyClose = true;
+            }
 
-                pixiApp.stage.removeChild(b);
-                bullets.splice(j, 1);
-
-                if (e.hp <= 0) {
-                    const coinAmount = Math.max(2, Math.floor(Math.log10(e.maxHp + 1) * 3.2) + Math.floor(Math.random()*4));
-                    spawnCoinParticles(e.x, e.y, coinAmount);
+            // 플레이어 기체와 적 기체 간 직접 충돌 판정 (삼각형 피격 히트박스 기하 판정)
+            if (State.invincibleTimer <= 0) {
+                const isColliding = isPointInTriangle(e.x, e.y, px, py - 15, px - 11, py + 11, px + 11, py + 11);
+                if (isColliding) {
+                    triggerFighterHit();
+                    
+                    // 부딪힌 적은 즉시 격추 처리
                     createMinimalExplosion(e.x, e.y);
-                    pixiApp.stage.removeChild(e);
+                    if (pixiApp.stage) pixiApp.stage.removeChild(e);
                     enemies.splice(i, 1);
                     updateWaveDisplay();
-                    enemyDestroyed = true;
-                    break;
+                    continue;
                 }
             }
-        }
 
-        if (enemyDestroyed) {
-            continue;
-        }
+            // 탄막 공격 쿨다운 처리 및 발사 메커니즘
+            if (!isFrozen && !State.isGameOver) {
+                e.fireCooldown = (e.fireCooldown || 0) - delta;
+                if (e.fireCooldown <= 0) {
+                    // 타입별 독창적인 공격 양상 발동
+                    if (e.patternType === 'bomber') {
+                        // 3방향 확산 살포탄
+                        fireEnemyBullet(e.x, e.y, 0, 1, 2.5);
+                        fireEnemyBullet(e.x, e.y, -0.4, 0.9, 2.3);
+                        fireEnemyBullet(e.x, e.y, 0.4, 0.9, 2.3);
+                        e.fireCooldown = 90 + Math.random() * 40;
+                    } else if (e.patternType === 'scout') {
+                        // 플레이어 기체를 향해 저격을 날리는 조준 타격탄
+                        const dx = px - e.x;
+                        const dy = py - e.y;
+                        const len = Math.hypot(dx, dy);
+                        if (len > 10) {
+                            fireEnemyBullet(e.x, e.y, dx/len, dy/len, 3.0);
+                        }
+                        e.fireCooldown = 70 + Math.random() * 30;
+                    }
+                }
+            }
 
-        // 바닥 방어선 침략 (클래식 슈팅 게임이므로 무단 소멸처리되며 목숨은 안 깎임)
-        if (e.y > height + 25) {
-            pixiApp.stage.removeChild(e);
-            enemies.splice(i, 1);
-            updateWaveDisplay();
+            // 플레이어 탄환 피격 계산
+            let enemyDestroyed = false;
+            for (let j = bullets.length - 1; j >= 0; j--) {
+                const b = bullets[j];
+                if (!b) continue;
+                const dist = Math.hypot(e.x - b.x, e.y - b.y);
+                if (dist < 20) {
+                    e.hp = (e.hp || 1) - (b.damage || 0);
+                    if (e.txt) e.txt.text = Math.max(0, e.hp).toString();
+                    
+                    if (e.graphic) {
+                        e.graphic.tint = isFrozen ? 0x3b82f6 : 0xef4444;
+                        const targetGraphic = e.graphic;
+                        setTimeout(() => { 
+                            if (targetGraphic && !targetGraphic.destroyed && typeof targetGraphic.tint !== 'undefined') { 
+                                targetGraphic.tint = 0xffffff; 
+                            } 
+                        }, 50);
+                    }
+
+                    if (pixiApp.stage) pixiApp.stage.removeChild(b);
+                    bullets.splice(j, 1);
+
+                    if (e.hp <= 0) {
+                        const coinAmount = Math.max(2, Math.floor(Math.log10((e.maxHp || 1) + 1) * 3.2) + Math.floor(Math.random()*4));
+                        spawnCoinParticles(e.x, e.y, coinAmount);
+                        createMinimalExplosion(e.x, e.y);
+                        if (pixiApp.stage) pixiApp.stage.removeChild(e);
+                        enemies.splice(i, 1);
+                        updateWaveDisplay();
+                        enemyDestroyed = true;
+                        break;
+                    }
+                }
+            }
+
+            if (enemyDestroyed) {
+                continue;
+            }
+
+            // 바닥 방어선 침략 돌파 (바닥 경계에서 안전하게 분할 삭제하여 충돌 크래시 원천 격리)
+            if (e.y > height + 25) {
+                if (pixiApp.stage) pixiApp.stage.removeChild(e);
+                enemies.splice(i, 1);
+                updateWaveDisplay();
+            }
+        } catch (err) {
+            console.error("Safely caught and bypassed loop error on enemy processing:", err);
+            enemies.splice(i, 1); // 오류 개체 안전 강제 분리 거름망
         }
     }
 
     // 침공 경보 제어
-    if (anyEnemyClose && State.activeTab === 'board') {
-        dangerBadge.classList.remove('hidden');
-        tabBtnShooter.classList.add('border', 'border-red-500', 'text-red-400', 'animate-pulse');
-    } else {
-        dangerBadge.classList.add('hidden');
-        if (State.activeTab !== 'shooter') {
-            tabBtnShooter.classList.remove('border', 'border-red-500', 'text-red-400', 'animate-pulse');
+    if (dangerBadge && tabBtnShooter) {
+        if (anyEnemyClose && State.activeTab === 'board') {
+            dangerBadge.classList.remove('hidden');
+            tabBtnShooter.classList.add('border', 'border-red-500', 'text-red-400', 'animate-pulse');
+        } else {
+            dangerBadge.classList.add('hidden');
+            if (State.activeTab !== 'shooter') {
+                tabBtnShooter.classList.remove('border', 'border-red-500', 'text-red-400', 'animate-pulse');
+            }
         }
     }
 }
 
 function createMinimalExplosion(x, y) {
+    if (!pixiApp || !pixiApp.stage) return;
     for (let i = 0; i < 8; i++) {
         const part = new PIXI.Graphics();
         part.beginFill(0xef4444); // 붉은 파편
@@ -1431,8 +1462,8 @@ function createMinimalExplosion(x, y) {
             part.y += part.vy * delta;
             part.alpha -= part.decay * delta;
             if (part.alpha <= 0) {
-                pixiApp.stage.removeChild(part);
-                pixiApp.ticker.remove(updateParticle);
+                if (pixiApp && pixiApp.stage) pixiApp.stage.removeChild(part);
+                if (pixiApp && pixiApp.ticker) pixiApp.ticker.remove(updateParticle);
             }
         };
         pixiApp.ticker.add(updateParticle);
@@ -1440,6 +1471,7 @@ function createMinimalExplosion(x, y) {
 }
 
 function createTinyExplosion(x, y, color = 0xffffff) {
+    if (!pixiApp || !pixiApp.stage) return;
     for (let i = 0; i < 3; i++) {
         const part = new PIXI.Graphics();
         part.beginFill(color);
@@ -1458,8 +1490,8 @@ function createTinyExplosion(x, y, color = 0xffffff) {
             part.y += part.vy * delta;
             part.alpha -= part.decay * delta;
             if (part.alpha <= 0) {
-                pixiApp.stage.removeChild(part);
-                pixiApp.ticker.remove(updateParticle);
+                if (pixiApp && pixiApp.stage) pixiApp.stage.removeChild(part);
+                if (pixiApp && pixiApp.ticker) pixiApp.ticker.remove(updateParticle);
             }
         };
         pixiApp.ticker.add(updateParticle);
@@ -1467,6 +1499,7 @@ function createTinyExplosion(x, y, color = 0xffffff) {
 }
 
 function spawnCoinParticles(startX, startY, count) {
+    if (!pixiApp || !pixiApp.stage) return;
     for (let i = 0; i < count; i++) {
         const coin = new PIXI.Graphics();
         coin.beginFill(0xf59e0b);
@@ -1485,32 +1518,41 @@ function spawnCoinParticles(startX, startY, count) {
 }
 
 function updateCoinsPool(delta) {
+    if (!pixiApp || !pixiApp.stage || !gunSprite) return;
     for (let i = coinsPool.length - 1; i >= 0; i--) {
-        const c = coinsPool[i];
-        if (c.delay > 0) {
-            c.x += c.vx * delta;
-            c.y += c.vy * delta;
-            c.vx *= 0.94;
-            c.vy += 0.16 * delta;
-            c.delay -= delta;
-        } else {
-            // 플레이어가 상하좌우 움직이므로, 동전들은 전투기의 현재 위치(gunSprite)를 정밀하게 추적합니다.
-            const targetX = gunSprite.x;
-            const targetY = gunSprite.y;
-            const dx = targetX - c.x;
-            const dy = targetY - c.y;
-            const dist = Math.hypot(dx, dy);
-            
-            if (dist < 15) {
-                addCoins(1);
-                pixiApp.stage.removeChild(c);
+        try {
+            const c = coinsPool[i];
+            if (!c) {
                 coinsPool.splice(i, 1);
                 continue;
             }
-            
-            const speed = 9;
-            c.x += (dx / dist) * speed * delta;
-            c.y += (dy / dist) * speed * delta;
+            if (c.delay > 0) {
+                c.x += c.vx * delta;
+                c.y += c.vy * delta;
+                c.vx *= 0.94;
+                c.vy += 0.16 * delta;
+                c.delay -= delta;
+            } else {
+                const targetX = gunSprite.x;
+                const targetY = gunSprite.y;
+                const dx = targetX - c.x;
+                const dy = targetY - c.y;
+                const dist = Math.hypot(dx, dy);
+                
+                if (dist < 15) {
+                    addCoins(1);
+                    if (pixiApp.stage) pixiApp.stage.removeChild(c);
+                    coinsPool.splice(i, 1);
+                    continue;
+                }
+                
+                const speed = 9;
+                c.x += (dx / dist) * speed * delta;
+                c.y += (dy / dist) * speed * delta;
+            }
+        } catch (err) {
+            console.error("Error updating coin particle physics:", err);
+            coinsPool.splice(i, 1);
         }
     }
 }
@@ -1537,7 +1579,7 @@ function triggerFighterHit() {
     }, 2000);
     
     // 전방위 충격 폭발 이펙트
-    createMinimalExplosion(gunSprite.x, gunSprite.y);
+    if (gunSprite) createMinimalExplosion(gunSprite.x, gunSprite.y);
     
     // 사망 확인
     if (State.lives <= 0) {
